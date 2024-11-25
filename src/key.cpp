@@ -17,6 +17,7 @@
 #include <openssl/rand.h>
 #include <openssl/obj_mac.h>
 #include <openssl/bn.h>
+#include <openssl/opensslv.h>
 
 static secp256k1_context* secp256k1_context_sign = NULL;
 
@@ -394,6 +395,14 @@ int ECDSA_SIG_recover_key_GFp(EC_KEY *eckey, ECDSA_SIG *ecsig, const unsigned ch
     int n = 0;
     int i = recid / 2;
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+    const BIGNUM *r;
+    const BIGNUM *s;
+    r = BN_new();
+    s = BN_new();
+    ECDSA_SIG_get0(ecsig, &r, &s);
+#endif
+
     const EC_GROUP *group = EC_KEY_get0_group(eckey);
     if ((ctx = BN_CTX_new()) == NULL) { ret = -1; goto err; }
     BN_CTX_start(ctx);
@@ -402,7 +411,11 @@ int ECDSA_SIG_recover_key_GFp(EC_KEY *eckey, ECDSA_SIG *ecsig, const unsigned ch
     x = BN_CTX_get(ctx);
     if (!BN_copy(x, order)) { ret=-1; goto err; }
     if (!BN_mul_word(x, i)) { ret=-1; goto err; }
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
     if (!BN_add(x, x, ecsig->r)) { ret=-1; goto err; }
+#else
+    if (!BN_add(x, x, r)) { ret=-1; goto err; }
+#endif
     field = BN_CTX_get(ctx);
     if (!EC_GROUP_get_curve_GFp(group, field, NULL, NULL, ctx)) { ret=-2; goto err; }
     if (BN_cmp(x, field) >= 0) { ret=0; goto err; }
@@ -423,9 +436,17 @@ int ECDSA_SIG_recover_key_GFp(EC_KEY *eckey, ECDSA_SIG *ecsig, const unsigned ch
     if (!BN_zero(zero)) { ret=-1; goto err; }
     if (!BN_mod_sub(e, zero, e, order, ctx)) { ret=-1; goto err; }
     rr = BN_CTX_get(ctx);
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
     if (!BN_mod_inverse(rr, ecsig->r, order, ctx)) { ret=-1; goto err; }
+#else
+    if (!BN_mod_inverse(rr, r, order, ctx)) { ret=-1; goto err; }
+#endif
     sor = BN_CTX_get(ctx);
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
     if (!BN_mod_mul(sor, ecsig->s, rr, order, ctx)) { ret=-1; goto err; }
+#else
+    if (!BN_mod_mul(sor, s, rr, order, ctx)) { ret=-1; goto err; }
+#endif
     eor = BN_CTX_get(ctx);
     if (!BN_mod_mul(eor, e, rr, order, ctx)) { ret=-1; goto err; }
     if (!EC_POINT_mul(group, Q, eor, R, sor, ctx)) { ret=-2; goto err; }
